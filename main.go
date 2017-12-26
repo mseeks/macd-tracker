@@ -129,7 +129,7 @@ func (equity *equity) broadcastStats() {
 	producer := kafka.NewWriter(kafka.WriterConfig{
 		Brokers:  []string{os.Getenv("KAFKA_ENDPOINT")},
 		Topic:    os.Getenv("KAFKA_TOPIC"),
-		Balancer: &kafka.LeastBytes{},
+		Balancer: &kafka.RoundRobin{},
 	})
 	defer producer.Close()
 
