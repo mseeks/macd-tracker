@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/antonholmquist/jason"
-	"github.com/jasonlvhit/gocron"
 	"github.com/segmentio/kafka-go"
 	"gopkg.in/resty.v1"
 )
@@ -26,6 +26,18 @@ type message struct {
 	Macd       string `json:"macd"`
 	MacdSignal string `json:"macd_signal"`
 	At         string `json:"at"`
+}
+
+type byDate []time.Time
+
+func (s byDate) Len() int {
+	return len(s)
+}
+func (s byDate) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+func (s byDate) Less(i, j int) bool {
+	return s[i].Unix() < s[j].Unix()
 }
 
 func (equity *equity) query() ([]byte, error) {
@@ -63,40 +75,48 @@ func (equity *equity) track() error {
 
 	technicalAnalysis, err := value.GetObject("Technical Analysis: MACD")
 	if err != nil {
+		if strings.Contains(err.Error(), "API call frequency") {
+			return fmt.Errorf("External API has enforced rate limiting")
+		}
 		return err
 	}
 
-	var todayKeys []string
-	var yesterdayKeys []string
-
-	today := time.Now().UTC().Format("2006-01-02")
-	yesterday := time.Now().AddDate(0, 0, -1).UTC().Format("2006-01-02")
+	var days []time.Time
+	dateLayout := "2006-01-02"
+	dateAndTimeLayout := "2006-01-02 15:04:05"
 
 	for key := range technicalAnalysis.Map() {
-		if strings.Contains(key, today) {
-			todayKeys = append(todayKeys, key)
+		day, e := time.Parse(dateLayout, key)
+		if e != nil {
+			day, e = time.Parse(dateAndTimeLayout, key)
+			if e != nil {
+				return err
+			}
 		}
-		if strings.Contains(key, yesterday) {
-			yesterdayKeys = append(yesterdayKeys, key)
+
+		days = append(days, day)
+	}
+
+	sort.Sort(byDate(days))
+
+	lastKey := days[len(days)-1]
+	keyShort := lastKey.Format(dateLayout)
+	keyLong := lastKey.Format(dateAndTimeLayout)
+
+	macdString, err := value.GetString("Technical Analysis: MACD", keyShort, "MACD")
+	if err != nil {
+		macdString, err = value.GetString("Technical Analysis: MACD", keyLong, "MACD")
+		if err != nil {
+			return err
 		}
 	}
 
-	key := ""
-
-	if len(todayKeys) > 0 {
-		key = todayKeys[0]
-	} else if len(todayKeys) == 0 && len(yesterdayKeys) > 0 {
-		key = yesterdayKeys[0]
-	}
-
-	macdString, err := value.GetString("Technical Analysis: MACD", key, "MACD")
+	macdSignalString, err := value.GetString("Technical Analysis: MACD", keyShort, "MACD_Signal")
 	if err != nil {
-		return err
-	}
-
-	macdSignalString, err := value.GetString("Technical Analysis: MACD", key, "MACD_Signal")
-	if err != nil {
-		return err
+		macdSignalString, err = value.GetString("Technical Analysis: MACD", keyLong, "MACD_Signal")
+		if err != nil {
+			return err
+		}
 	}
 
 	equity.macd = macdString
@@ -163,9 +183,6 @@ func shuffle(vals []string) {
 
 // Entrypoint for the program
 func main() {
-	// Initialize a new scheduler
-	scheduler := gocron.NewScheduler()
-
 	// Get a list of equities from the environment variable
 	equityEatchlist := strings.Split(os.Getenv("EQUITY_WATCHLIST"), ",")
 
@@ -173,13 +190,11 @@ func main() {
 	// This should only really matter if there's a case where to equities change direction during the same interval (unlikely)
 	shuffle(equityEatchlist)
 
-	// For each equity in the watchlist schedule it to be watched every 5 minutes
-	for _, equitySymbol := range equityEatchlist {
-		time.Sleep(5 * time.Second)
-		scheduler.Every(5).Minutes().Do(trackEquity, equitySymbol)
-		trackEquity(equitySymbol) // Watch the signal immediately rather than waiting until next trigger
+	for {
+		// For each equity in the watchlist schedule it to be watched every 5 minutes
+		for _, equitySymbol := range equityEatchlist {
+			time.Sleep(10 * time.Second)
+			trackEquity(equitySymbol) // Watch the signal immediately rather than waiting until next trigger
+		}
 	}
-
-	// Start the scheduler process
-	<-scheduler.Start()
 }
