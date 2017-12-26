@@ -191,10 +191,9 @@ func main() {
 	shuffle(equityEatchlist)
 
 	for {
-		// For each equity in the watchlist schedule it to be watched every 5 minutes
 		for _, equitySymbol := range equityEatchlist {
-			time.Sleep(10 * time.Second)
-			trackEquity(equitySymbol) // Watch the signal immediately rather than waiting until next trigger
+			time.Sleep(30 * time.Second)
+			trackEquity(equitySymbol)
 		}
 	}
 }
