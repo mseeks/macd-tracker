@@ -156,18 +156,16 @@ func (equity *equity) broadcastStats() {
 }
 
 func trackEquity(symbol string) {
-	go func() {
-		watchedEquity := equity{strings.ToUpper(symbol), "", ""}
+	watchedEquity := equity{strings.ToUpper(symbol), "", ""}
 
-		// Query the MACD stats for the equity
-		err := watchedEquity.track()
-		if err != nil {
-			fmt.Println("Error:", err)
-			return
-		}
+	// Query the MACD stats for the equity
+	err := watchedEquity.track()
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
 
-		watchedEquity.broadcastStats()
-	}()
+	watchedEquity.broadcastStats()
 }
 
 // Shuffles an array in place
