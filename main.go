@@ -152,7 +152,7 @@ func (equity *equity) broadcastStats() {
 	)
 
 	jsonMessageString := string(jsonMessage)
-	fmt.Println(equity.symbol, "->", jsonMessageString)
+	fmt.Println("Sent:", equity.symbol, "->", jsonMessageString)
 }
 
 func trackEquity(symbol string) {
