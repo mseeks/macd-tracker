@@ -10,9 +10,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/DataDog/dd-trace-go/tracer"
 	"github.com/antonholmquist/jason"
 	"github.com/segmentio/kafka-go"
 	"gopkg.in/resty.v1"
+
+	ddtrace "github.com/DataDog/dd-trace-go/opentracing"
+	opentracing "github.com/opentracing/opentracing-go"
 )
 
 // Used to represent an equity that we're watching for signal changes
@@ -41,6 +45,9 @@ func (s byDate) Less(i, j int) bool {
 }
 
 func (equity *equity) query() ([]byte, error) {
+	span := tracer.NewRootSpan("http.client.request", "alphavantage.co", "/query")
+	defer span.Finish()
+
 	resp, err := resty.R().
 		SetQueryParams(map[string]string{
 			"function":    "MACD",
@@ -54,6 +61,9 @@ func (equity *equity) query() ([]byte, error) {
 	if err != nil {
 		return []byte(""), err
 	}
+
+	span.SetMeta("http.status", fmt.Sprint(resp.StatusCode()))
+	span.SetMeta("http.url", resp.Request.URL)
 
 	if resp.StatusCode() != 200 {
 		return []byte(""), fmt.Errorf("Incorrect status code: %v", resp.Status())
@@ -181,6 +191,21 @@ func shuffle(vals []string) {
 
 // Entrypoint for the program
 func main() {
+	config := ddtrace.NewConfiguration()
+	config.ServiceName = "macd-tracker"
+	config.AgentHostname = os.Getenv("DATADOG_HOST")
+
+	// initialize a Tracer and ensure a graceful shutdown
+	// using the `closer.Close()`
+	tracer, closer, err := ddtrace.NewTracer(config)
+	if err != nil {
+		// handle the configuration error
+	}
+	defer closer.Close()
+
+	// set the Datadog tracer as a GlobalTracer
+	opentracing.SetGlobalTracer(tracer)
+
 	// Get a list of equities from the environment variable
 	equityEatchlist := strings.Split(os.Getenv("EQUITY_WATCHLIST"), ",")
 
