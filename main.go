@@ -146,15 +146,15 @@ func (equity *equity) broadcastStats() {
 		panic(err)
 	}
 
+	jsonMessageString := string(jsonMessage)
+	fmt.Println("Sending:", equity.symbol, "->", jsonMessageString)
+
 	msg := &sarama.ProducerMessage{Topic: topic, Value: sarama.StringEncoder(jsonMessage), Key: sarama.StringEncoder(equity.symbol)}
 	_, _, err = producer.SendMessage(msg)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-
-	jsonMessageString := string(jsonMessage)
-	fmt.Println("Sent:", equity.symbol, "->", jsonMessageString)
 }
 
 func trackEquity(symbol string) {
