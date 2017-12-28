@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -10,8 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Shopify/sarama"
 	"github.com/antonholmquist/jason"
-	"github.com/segmentio/kafka-go"
 	"gopkg.in/resty.v1"
 )
 
@@ -126,11 +125,14 @@ func (equity *equity) track() error {
 }
 
 func (equity *equity) broadcastStats() {
-	producer := kafka.NewWriter(kafka.WriterConfig{
-		Brokers:  []string{os.Getenv("KAFKA_ENDPOINT")},
-		Topic:    os.Getenv("KAFKA_TOPIC"),
-		Balancer: &kafka.RoundRobin{},
-	})
+	broker := os.Getenv("KAFKA_ENDPOINT")
+	topic := os.Getenv("KAFKA_PRODUCER_TOPIC")
+
+	producer, err := sarama.NewSyncProducer([]string{broker}, nil)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 	defer producer.Close()
 
 	signalMessage := message{
@@ -144,12 +146,12 @@ func (equity *equity) broadcastStats() {
 		panic(err)
 	}
 
-	producer.WriteMessages(context.Background(),
-		kafka.Message{
-			Key:   []byte(equity.symbol),
-			Value: jsonMessage,
-		},
-	)
+	msg := &sarama.ProducerMessage{Topic: topic, Value: sarama.StringEncoder(jsonMessage), Key: sarama.StringEncoder(equity.symbol)}
+	_, _, err = producer.SendMessage(msg)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 
 	jsonMessageString := string(jsonMessage)
 	fmt.Println("Sent:", equity.symbol, "->", jsonMessageString)
