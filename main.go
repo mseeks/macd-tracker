@@ -192,7 +192,7 @@ func main() {
 
 	for {
 		for _, equitySymbol := range equityEatchlist {
-			time.Sleep(30 * time.Second)
+			time.Sleep(15 * time.Second)
 			trackEquity(equitySymbol)
 		}
 	}
