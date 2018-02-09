@@ -11,6 +11,7 @@ import (
 	"github.com/Shopify/sarama"
 	"github.com/antonholmquist/jason"
 	"github.com/go-redis/redis"
+	"github.com/shopspring/decimal"
 	"gopkg.in/resty.v1"
 )
 
@@ -121,7 +122,7 @@ func (equity *equity) resetDecay() error {
 	return nil
 }
 
-func (equity *equity) decayedSignalPeriod() int {
+func (equity *equity) decayedSignalPeriod() int64 {
 	// Create the Redis client
 	client := newRedisClient()
 	defer client.Close()
@@ -143,7 +144,7 @@ func (equity *equity) decayedSignalPeriod() int {
 
 	decayRate := 5.0 / 7.0
 
-	result := 9 - int(diff.Hours()/24.0*decayRate)
+	result := 9 - decimal.NewFromFloat(diff.Hours()/24.0*decayRate).Round(0).IntPart()
 
 	if result < 2 {
 		result = 2
@@ -153,7 +154,7 @@ func (equity *equity) decayedSignalPeriod() int {
 }
 
 func (equity *equity) query(decayed bool) ([]byte, error) {
-	signalWindow := 9
+	signalWindow := int64(9)
 
 	if decayed {
 		signalWindow = equity.decayedSignalPeriod()
@@ -165,7 +166,7 @@ func (equity *equity) query(decayed bool) ([]byte, error) {
 			"symbol":       equity.symbol,
 			"interval":     "daily",
 			"series_type":  "close",
-			"signalperiod": strconv.Itoa(signalWindow),
+			"signalperiod": strconv.FormatInt(signalWindow, 10),
 			"apikey":       apiKey,
 		}).
 		SetHeader("Accept", "application/json").
