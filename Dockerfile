@@ -1,6 +1,6 @@
 FROM golang:1.8 as builder
 WORKDIR /go/src/github.com/msull92/macd-tracker
-COPY main.go .
+COPY *.go ./
 RUN go get ./...
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
 
