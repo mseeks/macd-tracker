@@ -87,6 +87,7 @@ func (equity *equity) hasChanged() (bool, error) {
 	// Check if there's an existing value in Redis
 	existingValue, err := client.Get(fmt.Sprint(equity.symbol, "_signal")).Result()
 	if err == redis.Nil {
+		fmt.Println("REDIS VALUE NOT SET, TRYING TO SET")
 		// Set the value if it didn't exist already
 		setErr := client.Set(fmt.Sprint(equity.symbol, "_signal"), signal, 0).Err()
 		if setErr != nil {
