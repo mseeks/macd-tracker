@@ -27,7 +27,7 @@ func trackEquity(symbol string) {
 		return
 	}
 
-	watchedEquity.broadcastStats()
+	watchedEquity.decaySignal()
 }
 
 // Entrypoint for the program
