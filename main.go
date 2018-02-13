@@ -52,7 +52,7 @@ func main() {
 	for {
 		for _, equitySymbol := range equityEatchlist {
 			time.Sleep(tickerInterval)
-			trackEquity(equitySymbol)
+			go trackEquity(equitySymbol)
 		}
 	}
 }
