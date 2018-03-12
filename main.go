@@ -3,56 +3,72 @@ package main
 import (
 	"fmt"
 	"os"
-	"strconv"
-	"strings"
 	"time"
+
+	cluster "github.com/bsm/sarama-cluster"
 )
 
 var (
 	apiEndpoint    string
 	apiKey         string
 	broker         string
+	consumerGroup  string
+	consumerTopic  string
 	producerTopic  string
 	tickerInterval time.Duration
 )
 
-// Macro function to run the tracking process
-func trackEquity(symbol string) {
-	watchedEquity := newEquity(symbol)
-
-	// Query the MACD stats for the equity
-	err := watchedEquity.track()
-	if err != nil {
-		fmt.Println("Error:", err)
-		return
-	}
-
-	watchedEquity.decaySignal()
-}
-
 // Entrypoint for the program
 func main() {
-	apiEndpoint = "https://www.alphavantage.co/query"
-	apiKey = os.Getenv("ALPHAVANTAGE_API_KEY")
 	broker = os.Getenv("KAFKA_ENDPOINT")
-	tickerIntervalSeconds, err := strconv.Atoi(getEnv("TICKER_INTERVAL_SECONDS", "5"))
-	if err != nil {
-		panic(err)
-	}
-	tickerInterval = time.Duration(tickerIntervalSeconds) * time.Second
+	consumerTopic = os.Getenv("KAFKA_CONSUMER_TOPIC")
+	consumerGroup = os.Getenv("KAFKA_CONSUMER_GROUP")
 	producerTopic = os.Getenv("KAFKA_PRODUCER_TOPIC")
 
-	// Get a list of equities from the environment variable
-	equityEatchlist := strings.Split(os.Getenv("EQUITY_WATCHLIST"), ",")
+	// init config
+	config := cluster.NewConfig()
 
-	// Shuffle watchlist so ENV order of equities isn't a weighted factor and it's more dependent on time-based priority
-	// This should only really matter if there's a case where to equities change direction during the same interval (unlikely)
-	shuffle(equityEatchlist)
+	// init consumer
+	brokers := []string{broker}
+	topics := []string{consumerTopic}
 
 	for {
-		for _, equitySymbol := range equityEatchlist {
-			time.Sleep(tickerInterval)
-			trackEquity(equitySymbol)
+		consumer, err := cluster.NewConsumer(brokers, consumerGroup, topics, config)
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+		defer consumer.Close()
+
+		// consume messages
+		for {
+			select {
+			case msg, ok := <-consumer.Messages():
+				if ok {
+					symbol := string(msg.Key)
+
+					watchedEquity, err := newEquity(symbol, msg.Value)
+					if err != nil {
+						fmt.Println("Error:", err)
+						return
+					}
+
+					// Query the MACD stats for the equity
+					err = watchedEquity.calculateMacd()
+					if err != nil {
+						fmt.Println("Error:", err)
+						return
+					}
+
+					err = watchedEquity.broadcastStats()
+					if err != nil {
+						fmt.Println("Error:", err)
+						return
+					}
+
+					consumer.MarkOffset(msg, "") // mark message as processed
+				}
+			}
 		}
 	}
 }

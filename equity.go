@@ -3,259 +3,174 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
+	"io/ioutil"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Shopify/sarama"
-	"github.com/antonholmquist/jason"
-	"github.com/go-redis/redis"
+	ema "github.com/erdelmaero/go-ema"
 	"github.com/shopspring/decimal"
-	"gopkg.in/resty.v1"
+	timezone "github.com/tkuchiki/go-timezone"
 )
 
 // The formatter for passing messages into Kafka
 type message struct {
-	Macd              string `json:"macd"`
-	MacdSignal        string `json:"macd_signal"`
-	MacdDecayedSignal string `json:"macd_decayed_signal"`
-	At                string `json:"at"`
+	Macd       string `json:"macd"`
+	MacdSignal string `json:"macd_signal"`
+	At         string `json:"at"`
 }
 
 // Used to represent an equity that we're watching for signal changes
 type equity struct {
-	symbol            string
-	macd              string
-	macdSignal        string
-	macdDecayedSignal string
+	symbol      string
+	latestQuote float64
+	macd        float64
+	macdSignal  float64
+	historicals []float64 // last values are latest dates
+	at          string
+}
+
+type quoteMessage struct {
+	Quote string `json:"quote"`
+	At    string `json:"at"`
+}
+
+type historicalQuery struct {
+	Historicals []struct {
+		BeginsAt   time.Time `json:"begins_at"`
+		ClosePrice string    `json:"close_price"`
+	} `json:"historicals"`
 }
 
 // Initializer method for creating a new equity object
-func newEquity(symbol string) equity {
-	return equity{strings.ToUpper(symbol), "", "", ""}
+func newEquity(symbol string, latestQuote []byte) (equity, error) {
+	message := quoteMessage{}
+	json.Unmarshal(latestQuote, &message)
+	quote, err := strconv.ParseFloat(message.Quote, 64)
+	if err != nil {
+		return equity{}, err
+	}
+
+	return equity{
+		symbol:      strings.ToUpper(symbol),
+		latestQuote: quote,
+		macd:        0.0,
+		macdSignal:  0.0,
+		historicals: []float64{},
+		at:          message.At,
+	}, nil
 }
 
-func (equity *equity) decaySignal() {
-	hasChanged, err := equity.hasChanged()
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-
-	if hasChanged {
-		equity.resetDecay()
-	}
-
-	equity.broadcastStats()
-}
-
-func (equity *equity) hasChanged() (bool, error) {
-	var signal string
-
-	macd, err := strconv.ParseFloat(equity.macd, 64)
-	if err != nil {
-		fmt.Println(err)
-		return false, err
-	}
-
-	macdSignal, err := strconv.ParseFloat(equity.macdSignal, 64)
-	if err != nil {
-		fmt.Println(err)
-		return false, err
-	}
-
-	if macd > macdSignal {
-		signal = "BUY"
-	} else {
-		signal = "SELL"
-	}
-
-	// Create the Redis client
-	client := newRedisClient()
-	defer client.Close()
-
-	// Check if there's an existing value in Redis
-	existingValue, err := client.Get(fmt.Sprint(equity.symbol, "_signal")).Result()
-	if err == redis.Nil {
-		// Set the value if it didn't exist already
-		setErr := client.Set(fmt.Sprint(equity.symbol, "_signal"), signal, 0).Err()
-		if setErr != nil {
-			return false, err
-		}
-	} else if err != nil {
-		return false, err
-	} else {
-		if existingValue != signal {
-			// Set to the new value
-			err := client.Set(fmt.Sprint(equity.symbol, "_signal"), signal, 0).Err()
-			if err != nil {
-				return false, err
-			}
-
-			return true, nil
-		}
-	}
-
-	return false, nil
-}
-
-func (equity *equity) resetDecay() error {
-	// Create the Redis client
-	client := newRedisClient()
-	defer client.Close()
-
-	err := client.Set(fmt.Sprint(equity.symbol, "_decay_start"), time.Now().UTC().Format("2006-01-02 15:04:05 -0700"), 0).Err()
+func (equity *equity) calculateMacd() error {
+	err := equity.backfillHistoricals()
 	if err != nil {
 		return err
 	}
+
+	long := ema.NewEma(26)
+	short := ema.NewEma(12)
+	for _, value := range equity.historicals {
+		long.Add(1, value)
+		short.Add(1, value)
+	}
+
+	shortPoints := short.GetPoints()
+	longPoints := long.GetPoints()
+
+	macd := []float64{}
+	for i, longPoint := range longPoints {
+		macd = append(macd, shortPoints[i].Ema-longPoint.Ema)
+	}
+
+	signal := ema.NewEma(9)
+	for _, value := range macd[len(macd)-30:] {
+		signal.Add(1, value)
+	}
+
+	signalPoints := signal.GetPoints()
+
+	equity.macd = macd[len(macd)-1]
+	equity.macdSignal = signalPoints[len(signalPoints)-1].Ema
 
 	return nil
 }
 
-func (equity *equity) decayedSignalPeriod() int64 {
-	// Create the Redis client
-	client := newRedisClient()
-	defer client.Close()
+func (equity *equity) backfillHistoricals() error {
+	now := time.Now()
 
-	decayStart, err := client.Get(fmt.Sprint(equity.symbol, "_decay_start")).Result()
-	if err == redis.Nil {
-		decayStart = time.Now().UTC().Format("2006-01-02 15:04:05 -0700")
-	} else if err != nil {
-		panic(err)
-	}
-
-	decayStartTime, err := time.Parse("2006-01-02 15:04:05 -0700", decayStart)
-	if err != nil {
-		fmt.Println(err)
-		return 9
-	}
-
-	diff := time.Now().Sub(decayStartTime)
-
-	decayRate := 5.0 / 7.0
-
-	result := 9 - decimal.NewFromFloat(diff.Hours()/24.0*decayRate).Round(0).IntPart()
-
-	if result < 2 {
-		result = 2
-	}
-
-	return result
-}
-
-func (equity *equity) query(decayed bool) ([]byte, error) {
-	signalWindow := int64(9)
-
-	if decayed {
-		signalWindow = equity.decayedSignalPeriod()
-	}
-
-	resp, err := resty.R().
-		SetQueryParams(map[string]string{
-			"function":     "MACD",
-			"symbol":       equity.symbol,
-			"interval":     "daily",
-			"series_type":  "close",
-			"signalperiod": strconv.FormatInt(signalWindow, 10),
-			"apikey":       apiKey,
-		}).
-		SetHeader("Accept", "application/json").
-		Get(apiEndpoint)
-	if err != nil {
-		return []byte(""), err
-	}
-
-	if resp.StatusCode() != 200 {
-		return []byte(""), fmt.Errorf("Incorrect status code: %v", resp.Status())
-	}
-
-	return resp.Body(), nil
-}
-
-func (equity *equity) track() error {
-	macdString, macdSignalString, err := equity.getStats(false)
-	if err != nil {
-		return err
-	}
-	_, macdDecayedSignalString, err := equity.getStats(true)
+	est, err := timezone.FixedTimezone(now, "America/New_York")
 	if err != nil {
 		return err
 	}
 
-	equity.macd = macdString
-	equity.macdSignal = macdSignalString
-	equity.macdDecayedSignal = macdDecayedSignalString
+	redisClient := newRedisClient()
+	defer redisClient.Close()
+
+	dayKey := est.Format(fmt.Sprintf("%v_close_2006_01_02", equity.symbol))
+	result := redisClient.Get(dayKey)
+	results := result.Val()
+
+	if results == "" {
+		var query historicalQuery
+		var closeList []string
+
+		resp, err := http.Get(fmt.Sprintf("https://api.robinhood.com/quotes/historicals/%v/?interval=day", equity.symbol))
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+
+		json.Unmarshal(body, &query)
+
+		for _, historical := range query.Historicals {
+			closeList = append(closeList, historical.ClosePrice)
+		}
+
+		closes := strings.Join(closeList, ",")
+
+		redisClient.Set(dayKey, closes, 0)
+		results = closes
+	}
+
+	for _, result := range strings.Split(results, ",") {
+		if result == "" {
+			continue
+		}
+
+		decimal, err := decimal.NewFromString(result)
+		if err != nil {
+			return err
+		}
+
+		float, _ := decimal.Float64()
+
+		equity.historicals = append(equity.historicals, float)
+	}
+
+	isOpen, err := isExtendedMarketOpen()
+	if err != nil {
+		return err
+	}
+
+	if isOpen {
+		equity.historicals = append(equity.historicals, equity.latestQuote)
+	}
 
 	return nil
-}
-
-func (equity *equity) getStats(decayed bool) (string, string, error) {
-	query, err := equity.query(decayed)
-	if err != nil {
-		return "", "", err
-	}
-
-	value, err := jason.NewObjectFromBytes(query)
-	if err != nil {
-		return "", "", err
-	}
-
-	technicalAnalysis, err := value.GetObject("Technical Analysis: MACD")
-	if err != nil {
-		if strings.Contains(err.Error(), "API call frequency") {
-			return "", "", fmt.Errorf("External API has enforced rate limiting")
-		}
-		return "", "", err
-	}
-
-	var days []time.Time
-	dateLayout := "2006-01-02"
-	dateAndTimeLayout := "2006-01-02 15:04:05"
-
-	for key := range technicalAnalysis.Map() {
-		day, e := time.Parse(dateLayout, key)
-		if e != nil {
-			day, e = time.Parse(dateAndTimeLayout, key)
-			if e != nil {
-				return "", "", err
-			}
-		}
-
-		days = append(days, day)
-	}
-
-	sort.Sort(byDate(days))
-
-	lastKey := days[len(days)-1]
-	keyShort := lastKey.Format(dateLayout)
-	keyLong := lastKey.Format(dateAndTimeLayout)
-
-	macdString, err := value.GetString("Technical Analysis: MACD", keyShort, "MACD")
-	if err != nil {
-		macdString, err = value.GetString("Technical Analysis: MACD", keyLong, "MACD")
-		if err != nil {
-			return "", "", err
-		}
-	}
-
-	macdSignalString, err := value.GetString("Technical Analysis: MACD", keyShort, "MACD_Signal")
-	if err != nil {
-		macdSignalString, err = value.GetString("Technical Analysis: MACD", keyLong, "MACD_Signal")
-		if err != nil {
-			return "", "", err
-		}
-	}
-
-	return macdString, macdSignalString, nil
 }
 
 func (equity *equity) generateMessage() []byte {
 	signalMessage := message{
-		Macd:              equity.macd,
-		MacdSignal:        equity.macdSignal,
-		MacdDecayedSignal: equity.macdDecayedSignal,
-		At:                time.Now().UTC().Format("2006-01-02 15:04:05 -0700"),
+		Macd:       decimal.NewFromFloat(equity.macd).Round(2).String(),
+		MacdSignal: decimal.NewFromFloat(equity.macdSignal).Round(2).String(),
+		At:         equity.at,
 	}
 
 	jsonMessage, err := json.Marshal(signalMessage)
@@ -269,11 +184,10 @@ func (equity *equity) generateMessage() []byte {
 	return jsonMessage
 }
 
-func (equity *equity) broadcastStats() {
+func (equity *equity) broadcastStats() error {
 	producer, err := newKafkaProducer()
 	if err != nil {
-		fmt.Println(err)
-		return
+		return err
 	}
 	defer producer.Close()
 
@@ -282,7 +196,8 @@ func (equity *equity) broadcastStats() {
 	message := &sarama.ProducerMessage{Topic: producerTopic, Value: sarama.StringEncoder(signalMessage), Key: sarama.StringEncoder(equity.symbol)}
 	_, _, err = producer.SendMessage(message)
 	if err != nil {
-		fmt.Println(err)
-		return
+		return err
 	}
+
+	return nil
 }
