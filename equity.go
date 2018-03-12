@@ -154,14 +154,7 @@ func (equity *equity) backfillHistoricals() error {
 		equity.historicals = append(equity.historicals, float)
 	}
 
-	isOpen, err := isExtendedMarketOpen()
-	if err != nil {
-		return err
-	}
-
-	if isOpen {
-		equity.historicals = append(equity.historicals, equity.latestQuote)
-	}
+	equity.historicals = append(equity.historicals, equity.latestQuote)
 
 	return nil
 }
