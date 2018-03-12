@@ -117,10 +117,10 @@ func (equity *equity) backfillHistoricals() error {
 		var closeList []string
 
 		resp, err := http.Get(fmt.Sprintf("https://api.robinhood.com/quotes/historicals/%v/?interval=day", equity.symbol))
+		defer resp.Body.Close()
 		if err != nil {
 			return err
 		}
-		defer resp.Body.Close()
 
 		body, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
@@ -179,10 +179,10 @@ func (equity *equity) generateMessage() []byte {
 
 func (equity *equity) broadcastStats() error {
 	producer, err := newKafkaProducer()
+	defer producer.Close()
 	if err != nil {
 		return err
 	}
-	defer producer.Close()
 
 	signalMessage := equity.generateMessage()
 

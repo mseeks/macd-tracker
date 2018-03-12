@@ -34,11 +34,11 @@ func main() {
 
 	for {
 		consumer, err := cluster.NewConsumer(brokers, consumerGroup, topics, config)
+		defer consumer.Close()
 		if err != nil {
 			fmt.Println(err)
 			continue
 		}
-		defer consumer.Close()
 
 		// consume messages
 		for {
