@@ -40,6 +40,7 @@ func main() {
 
 	for {
 		var err error
+
 		consumer, err = cluster.NewConsumer(brokers, consumerGroup, topics, consumerConfig)
 		if err != nil {
 			fmt.Println(err)
