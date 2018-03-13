@@ -2,15 +2,20 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
+	"time"
 
+	"github.com/Shopify/sarama"
 	cluster "github.com/bsm/sarama-cluster"
 )
 
 var (
 	broker        string
+	consumer      *cluster.Consumer
 	consumerGroup string
 	consumerTopic string
+	producer      sarama.AsyncProducer
 	producerTopic string
 )
 
@@ -22,19 +27,44 @@ func main() {
 	producerTopic = os.Getenv("KAFKA_PRODUCER_TOPIC")
 
 	// init config
-	config := cluster.NewConfig()
+	consumerConfig := cluster.NewConfig()
+	producerConfig := sarama.NewConfig()
+
+	producerConfig.Producer.RequiredAcks = sarama.WaitForLocal       // Only wait for the leader to ack
+	producerConfig.Producer.Compression = sarama.CompressionSnappy   // Compress messages
+	producerConfig.Producer.Flush.Frequency = 500 * time.Millisecond // Flush batches every 500ms
 
 	// init consumer
 	brokers := []string{broker}
 	topics := []string{consumerTopic}
 
 	for {
-		consumer, err := cluster.NewConsumer(brokers, consumerGroup, topics, config)
-		defer consumer.Close()
+		var err error
+		consumer, err = cluster.NewConsumer(brokers, consumerGroup, topics, consumerConfig)
 		if err != nil {
 			fmt.Println(err)
 			continue
 		}
+		defer consumer.Close()
+
+		producer, err = sarama.NewAsyncProducer(brokers, producerConfig)
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+		defer producer.Close()
+
+		go func() {
+			for err := range consumer.Errors() {
+				log.Println("Error:", err)
+			}
+		}()
+
+		go func() {
+			for err := range producer.Errors() {
+				log.Println("Error:", err)
+			}
+		}()
 
 		// consume messages
 		for {
@@ -56,11 +86,7 @@ func main() {
 						return
 					}
 
-					err = watchedEquity.broadcastStats()
-					if err != nil {
-						fmt.Println("Error:", err)
-						return
-					}
+					watchedEquity.broadcastStats()
 
 					consumer.MarkOffset(msg, "") // mark message as processed
 				}

@@ -177,20 +177,12 @@ func (equity *equity) generateMessage() []byte {
 	return jsonMessage
 }
 
-func (equity *equity) broadcastStats() error {
-	producer, err := newKafkaProducer()
-	defer producer.Close()
-	if err != nil {
-		return err
-	}
-
+func (equity *equity) broadcastStats() {
 	signalMessage := equity.generateMessage()
 
-	message := &sarama.ProducerMessage{Topic: producerTopic, Value: sarama.StringEncoder(signalMessage), Key: sarama.StringEncoder(equity.symbol)}
-	_, _, err = producer.SendMessage(message)
-	if err != nil {
-		return err
+	producer.Input() <- &sarama.ProducerMessage{
+		Topic: producerTopic,
+		Key:   sarama.StringEncoder(equity.symbol),
+		Value: sarama.StringEncoder(signalMessage),
 	}
-
-	return nil
 }
