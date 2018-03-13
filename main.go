@@ -8,10 +8,10 @@ import (
 )
 
 var (
-	broker         string
-	consumerGroup  string
-	consumerTopic  string
-	producerTopic  string
+	broker        string
+	consumerGroup string
+	consumerTopic string
+	producerTopic string
 )
 
 // Entrypoint for the program
