@@ -3,19 +3,15 @@ package main
 import (
 	"fmt"
 	"os"
-	"time"
 
 	cluster "github.com/bsm/sarama-cluster"
 )
 
 var (
-	apiEndpoint    string
-	apiKey         string
 	broker         string
 	consumerGroup  string
 	consumerTopic  string
 	producerTopic  string
-	tickerInterval time.Duration
 )
 
 // Entrypoint for the program
