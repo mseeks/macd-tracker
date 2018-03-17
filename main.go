@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/DannyBen/quandl"
 	"github.com/Shopify/sarama"
 	cluster "github.com/bsm/sarama-cluster"
 )
@@ -25,6 +26,7 @@ func main() {
 	consumerTopic = os.Getenv("KAFKA_CONSUMER_TOPIC")
 	consumerGroup = os.Getenv("KAFKA_CONSUMER_GROUP")
 	producerTopic = os.Getenv("KAFKA_PRODUCER_TOPIC")
+	quandl.APIKey = os.Getenv("QUANDL_API_KEY")
 
 	// init config
 	consumerConfig := cluster.NewConfig()

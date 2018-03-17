@@ -3,12 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/DannyBen/quandl"
 	"github.com/Shopify/sarama"
 	ema "github.com/erdelmaero/go-ema"
 	"github.com/shopspring/decimal"
@@ -35,13 +34,6 @@ type equity struct {
 type quoteMessage struct {
 	Quote string `json:"quote"`
 	At    string `json:"at"`
-}
-
-type historicalQuery struct {
-	Historicals []struct {
-		BeginsAt   time.Time `json:"begins_at"`
-		ClosePrice string    `json:"close_price"`
-	} `json:"historicals"`
 }
 
 // Initializer method for creating a new equity object
@@ -85,7 +77,7 @@ func (equity *equity) calculateMacd() error {
 	}
 
 	signal := ema.NewEma(9)
-	for _, value := range macd[len(macd)-30:] {
+	for _, value := range macd {
 		signal.Add(1, value)
 	}
 
@@ -113,25 +105,33 @@ func (equity *equity) backfillHistoricals() error {
 	results := result.Val()
 
 	if results == "" {
-		var query historicalQuery
 		var closeList []string
 
-		resp, err := http.Get(fmt.Sprintf("https://api.robinhood.com/quotes/historicals/%v/?interval=day", equity.symbol))
-		defer resp.Body.Close()
+		quotes, err := quandl.GetSymbol(fmt.Sprintf("WIKI/%v", equity.symbol), nil)
 		if err != nil {
 			return err
 		}
 
-		body, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			return err
+		for _, item := range quotes.Data {
+			dateString := fmt.Sprintf("%v", item[0])
+			closeString := fmt.Sprintf("%v", item[11])
+
+			quoteTime, err := time.Parse("2006-01-02", dateString)
+			if err != nil {
+				return err
+			}
+
+			equityTime, err := time.Parse("2006-01-02 15:04:05 -0700", equity.at)
+			if err != nil {
+				return err
+			}
+
+			if quoteTime.Sub(equityTime) <= 0 {
+				closeList = append(closeList, closeString)
+			}
 		}
 
-		json.Unmarshal(body, &query)
-
-		for _, historical := range query.Historicals {
-			closeList = append(closeList, historical.ClosePrice)
-		}
+		reverse(closeList)
 
 		closes := strings.Join(closeList, ",")
 
