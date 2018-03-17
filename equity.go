@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -107,9 +108,23 @@ func (equity *equity) backfillHistoricals() error {
 	if results == "" {
 		var closeList []string
 
-		quotes, err := quandl.GetSymbol(fmt.Sprintf("WIKI/%v", equity.symbol), nil)
-		if err != nil {
-			return err
+		var quotes *quandl.SymbolResponse
+
+		if os.Getenv("TEST_MODE") == "true" {
+			if cache[equity.symbol] == nil {
+				quotes, err = quandl.GetSymbol(fmt.Sprintf("WIKI/%v", equity.symbol), nil)
+				if err != nil {
+					return err
+				}
+				cache[equity.symbol] = quotes
+			} else {
+				quotes = cache[equity.symbol]
+			}
+		} else {
+			quotes, err = quandl.GetSymbol(fmt.Sprintf("WIKI/%v", equity.symbol), nil)
+			if err != nil {
+				return err
+			}
 		}
 
 		for _, item := range quotes.Data {

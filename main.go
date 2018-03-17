@@ -13,6 +13,7 @@ import (
 
 var (
 	broker        string
+	cache         map[string]*quandl.SymbolResponse
 	consumer      *cluster.Consumer
 	consumerGroup string
 	consumerTopic string
@@ -27,6 +28,10 @@ func main() {
 	consumerGroup = os.Getenv("KAFKA_CONSUMER_GROUP")
 	producerTopic = os.Getenv("KAFKA_PRODUCER_TOPIC")
 	quandl.APIKey = os.Getenv("QUANDL_API_KEY")
+
+	if os.Getenv("TEST_MODE") == "true" {
+		cache = make(map[string]*quandl.SymbolResponse)
+	}
 
 	// init config
 	consumerConfig := cluster.NewConfig()
