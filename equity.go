@@ -64,7 +64,7 @@ func (equity *equity) calculateMacd() error {
 
 	long := ema.NewEma(26)
 	short := ema.NewEma(12)
-	for _, value := range equity.historicals[len(equity.historicals)-26:] {
+	for _, value := range equity.historicals {
 		long.Add(1, value)
 		short.Add(1, value)
 	}
@@ -91,7 +91,10 @@ func (equity *equity) calculateMacd() error {
 }
 
 func (equity *equity) backfillHistoricals() error {
-	now := time.Now()
+	now, err := time.Parse("2006-01-02 15:04:05 -0700", equity.at)
+	if err != nil {
+		return err
+	}
 
 	est, err := timezone.FixedTimezone(now, "America/New_York")
 	if err != nil {
@@ -136,12 +139,7 @@ func (equity *equity) backfillHistoricals() error {
 				return err
 			}
 
-			equityTime, err := time.Parse("2006-01-02 15:04:05 -0700", equity.at)
-			if err != nil {
-				return err
-			}
-
-			if quoteTime.Sub(equityTime) <= 0 {
+			if quoteTime.Sub(now) <= 0 {
 				closeList = append(closeList, closeString)
 			}
 		}
@@ -151,6 +149,7 @@ func (equity *equity) backfillHistoricals() error {
 		closes := strings.Join(closeList, ",")
 
 		redisClient.Set(dayKey, closes, 0)
+
 		results = closes
 	}
 
