@@ -64,7 +64,7 @@ func (equity *equity) calculateMacd() error {
 
 	long := ema.NewEma(26)
 	short := ema.NewEma(12)
-	for _, value := range equity.historicals {
+	for _, value := range equity.historicals[len(signalPoints)-26:] {
 		long.Add(1, value)
 		short.Add(1, value)
 	}
